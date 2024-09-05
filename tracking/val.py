@@ -22,7 +22,7 @@ from boxmot.utils.checks import RequirementsChecker
 from boxmot.utils.torch_utils import select_device
 
 from ultralytics import YOLO
-from ultralytics.data.loaders import LoadImages
+from ultralytics.data.loaders import LoadImagesAndVideos
 from ultralytics.utils.files import increment_path
 from ultralytics.data.utils import VID_FORMATS
 
@@ -52,10 +52,22 @@ def prompt_overwrite(path_type: str, path: str, ci: bool = False) -> bool:
 
     def input_with_timeout(prompt, timeout=3.0):
         print(prompt, end='', flush=True)
-        inputs, _, _ = select.select([sys.stdin], [], [], timeout)
-        if inputs:
-            result = sys.stdin.readline().strip().lower()
-            return result in ['y', 'yes']
+        
+        result = []
+        input_received = threading.Event()
+
+        def get_input():
+            user_input = sys.stdin.readline().strip().lower()
+            result.append(user_input)
+            input_received.set()
+
+        input_thread = threading.Thread(target=get_input)
+        input_thread.daemon = True  # Ensure thread does not prevent program exit
+        input_thread.start()
+        input_thread.join(timeout)
+
+        if input_received.is_set():
+            return result[0] in ['y', 'yes']
         else:
             print("\nNo response, not proceeding with overwrite...")
             return False
@@ -72,9 +84,11 @@ def generate_dets_embs(args: argparse.Namespace, y: Path) -> None:
         y (Path): Path to the YOLO model file.
     """
     WEIGHTS.mkdir(parents=True, exist_ok=True)
+    
+    ul_models = ['yolov8', 'yolov9', 'yolov10', 'rtdetr', 'sam']
 
-    yolo = YOLO(y if 'yolov8' in str(y) else 'yolov8n.pt')
-
+    yolo = YOLO(y if any(yolo in str(args.yolo_model) for yolo in ul_models) else 'yolov8n.pt')
+    
     results = yolo(
         source=args.source,
         conf=args.conf,
@@ -91,7 +105,7 @@ def generate_dets_embs(args: argparse.Namespace, y: Path) -> None:
         vid_stride=args.vid_stride,
     )
 
-    if 'yolov8' not in str(y):
+    if not any(yolo in str(args.yolo_model) for yolo in ul_models):
         m = get_yolo_inferer(y)
         model = m(model=y, device=yolo.predictor.device, args=yolo.predictor.args)
         yolo.predictor.model = model
@@ -178,13 +192,13 @@ def generate_mot_results(args: argparse.Namespace, config_dict: dict = None) -> 
 
     dets_n_embs = np.concatenate([dets, embs], axis=1)
 
-    dataset = LoadImages(args.source)
+    dataset = LoadImagesAndVideos(args.source)
 
     txt_path = args.exp_folder_path / (Path(args.source).parent.name + '.txt')
     all_mot_results = []
 
     for frame_idx, d in enumerate(tqdm(dataset, desc="Frames")):
-        if (frame_idx + 1) == len(dataset):
+        if frame_idx == len(dataset):
             break
 
         im = d[1][0]

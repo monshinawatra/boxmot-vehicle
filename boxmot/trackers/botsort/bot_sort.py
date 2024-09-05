@@ -217,6 +217,7 @@ class BoTSORT(BaseTracker):
         self.match_thresh = match_thresh
 
         self.buffer_size = int(frame_rate / 30.0 * track_buffer)
+        self.max_time_lost = self.buffer_size
         self.kalman_filter = KalmanFilterXYWH()
 
         # ReID module
@@ -234,18 +235,8 @@ class BoTSORT(BaseTracker):
 
     @PerClassDecorator
     def update(self, dets: np.ndarray, img: np.ndarray, embs: np.ndarray = None) -> np.ndarray:
-        assert isinstance(
-            dets, np.ndarray
-        ), f"Unsupported 'dets' input format '{type(dets)}', valid format is np.ndarray"
-        assert isinstance(
-            img, np.ndarray
-        ), f"Unsupported 'img_numpy' input format '{type(img)}', valid format is np.ndarray"
-        assert (
-            len(dets.shape) == 2
-        ), "Unsupported 'dets' dimensions, valid number of dimensions is two"
-        assert (
-            dets.shape[1] == 6
-        ), "Unsupported 'dets' 2nd dimension lenght, valid lenghts is 6"
+        
+        self.check_inputs(dets, img)
 
         self.frame_count += 1
         activated_starcks = []
@@ -397,7 +388,7 @@ class BoTSORT(BaseTracker):
 
         """ Step 5: Update state"""
         for track in self.lost_stracks:
-            if self.frame_count - track.end_frame > self.max_age:
+            if self.frame_count - track.end_frame > self.max_time_lost:
                 track.mark_removed()
                 removed_stracks.append(track)
 
